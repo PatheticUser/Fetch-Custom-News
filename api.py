@@ -66,7 +66,7 @@ def geocode_location(place: str):
 
 
 def enrich_article(article: Dict) -> Dict:
-    """Add places (lat/lon) to article"""
+    """Add places (lat/lon) and place names to article"""
     text = article["title"] + " " + (article.get("description") or "")
     places = extract_locations(text)
     coords = []
@@ -74,7 +74,7 @@ def enrich_article(article: Dict) -> Dict:
         geo = geocode_location(place)
         if geo:
             coords.append(geo)
-    article["places"] = coords
+    article["places"] = coords  # List of dicts with lat, lon, name
     return article
 
 
@@ -153,33 +153,31 @@ def fetch_news(location: Optional[str] = None) -> List[Dict]:
     for source_name, feed_url in RSS_FEEDS.items():
         articles = parse_rss_feed(feed_url, source_name)
         all_articles.extend(articles)
-
     results = []
+    location_lower = location.lower() if location else None
     for article in all_articles:
-        # Add location enrichment FIRST so places are available
-        article = enrich_article(article)
-
         source_name = article["source"]
         rank = get_dynamic_rank(source_name)
-
-        # Region type (basic check)
+        # Enrich article with extracted places
+        article = enrich_article(article)
+        # Region type (enhanced check)
         region_type = "other"
-        if location:
-            location_lower = location.lower()
+        if location_lower:
             text = (article["title"] + " " + article.get("description", "")).lower()
-            # Check for location in article's text
+            places_names = [p["name"].lower() for p in article.get("places", [])]
             if location_lower in text:
                 region_type = "within_city"
-            # Check for location in source name
             elif location_lower in source_name.lower():
                 region_type = "within_region"
-
+            elif location_lower in places_names:
+                region_type = "within_city"
+            else:
+                region_type = "other"
         article["rank"] = rank
         article["region_type"] = region_type
         results.append(article)
-
-    # Sort the results by rank (descending) and then published date (ascending)
-    results.sort(key=lambda x: (-x["rank"], x["publishedAt"]), reverse=False)
+    # Sort so highest rank and newest articles come first
+    results.sort(key=lambda x: (x["rank"], x["publishedAt"]), reverse=True)
     return results
 
 
