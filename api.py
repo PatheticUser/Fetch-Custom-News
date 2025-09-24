@@ -156,28 +156,29 @@ def fetch_news(location: Optional[str] = None) -> List[Dict]:
 
     results = []
     for article in all_articles:
+        # Add location enrichment FIRST so places are available
+        article = enrich_article(article)
+
         source_name = article["source"]
         rank = get_dynamic_rank(source_name)
-
-        # Add location enrichment
-        article = enrich_article(article)
 
         # Region type (basic check)
         region_type = "other"
         if location:
             location_lower = location.lower()
             text = (article["title"] + " " + article.get("description", "")).lower()
+            # Check for location in article's text
             if location_lower in text:
                 region_type = "within_city"
+            # Check for location in source name
             elif location_lower in source_name.lower():
                 region_type = "within_region"
-            else:
-                region_type = "other"
 
         article["rank"] = rank
         article["region_type"] = region_type
         results.append(article)
 
+    # Sort the results by rank (descending) and then published date (ascending)
     results.sort(key=lambda x: (-x["rank"], x["publishedAt"]), reverse=False)
     return results
 
