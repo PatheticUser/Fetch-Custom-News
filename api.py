@@ -162,34 +162,22 @@ def fetch_news(location: Optional[str] = None) -> List[Dict]:
         # Add location enrichment
         article = enrich_article(article)
 
-        # Region type (enhanced logic)
+        # Region type (basic check)
         region_type = "other"
         if location:
             location_lower = location.lower()
             text = (article["title"] + " " + article.get("description", "")).lower()
-
-            # Check if location is mentioned in the article
             if location_lower in text:
                 region_type = "within_city"
-            # Check if location is part of the source name or region
-            elif any(location_lower in source.lower() for source in RSS_FEEDS.keys()):
+            elif location_lower in source_name.lower():
                 region_type = "within_region"
             else:
                 region_type = "other"
-        else:
-            region_type = "global"
 
-        # Ensure all required fields are present
         article["rank"] = rank
         article["region_type"] = region_type
-
-        # Make sure places field exists even if empty
-        if "places" not in article:
-            article["places"] = []
-
         results.append(article)
 
-    # Sort by rank (descending) and then by publishedAt (ascending)
     results.sort(key=lambda x: (-x["rank"], x["publishedAt"]), reverse=False)
     return results
 
@@ -198,67 +186,20 @@ def fetch_news(location: Optional[str] = None) -> List[Dict]:
 # API Endpoints
 # -------------------------------
 @app.get("/news/all")
-def get_all_news(
-    location: Optional[str] = Query(None, description="Filter news by location")
-):
-    news = fetch_news(location)
-    return {
-        "news": news,
-        "total": len(news),
-        "location": location,
-        "sources": list(RSS_FEEDS.keys()),
-    }
+def get_all_news(location: Optional[str] = Query(None)):
+    return {"news": fetch_news(location)}
 
 
 @app.get("/news/critical")
-def get_critical_news(
-    location: Optional[str] = Query(
-        None, description="Filter critical news by location"
-    )
-):
+def get_critical_news(location: Optional[str] = Query(None)):
     news = fetch_news(location)
-    critical_news = [n for n in news if n["rank"] >= 80]
-    return {
-        "news": critical_news,
-        "total": len(critical_news),
-        "location": location,
-        "sources": list(RSS_FEEDS.keys()),
-    }
+    return {"news": [n for n in news if n["rank"] >= 80]}
 
 
 @app.get("/news/most_critical")
-def get_most_critical_news(
-    location: Optional[str] = Query(
-        None, description="Filter most critical news by location"
-    )
-):
+def get_most_critical_news(location: Optional[str] = Query(None)):
     news = fetch_news(location)
-    most_critical_news = [n for n in news if n["rank"] >= 90]
-    return {
-        "news": most_critical_news,
-        "total": len(most_critical_news),
-        "location": location,
-        "sources": list(RSS_FEEDS.keys()),
-    }
-
-
-@app.get("/news/sources")
-def get_news_sources():
-    """Endpoint to get available news sources with their ranks"""
-    sources_info = []
-    for source_name in RSS_FEEDS.keys():
-        sources_info.append(
-            {
-                "name": source_name,
-                "rank": get_dynamic_rank(source_name),
-                "url": RSS_FEEDS[source_name],
-            }
-        )
-
-    return {
-        "sources": sorted(sources_info, key=lambda x: -x["rank"]),
-        "total_sources": len(sources_info),
-    }
+    return {"news": [n for n in news if n["rank"] >= 90]}
 
 
 @app.get("/")
@@ -266,16 +207,9 @@ def root():
     return {
         "message": "News RSS Feed API with AI-powered Location Extraction",
         "endpoints": {
-            "/news/all": "Get all news articles with location enrichment",
+            "/news/all": "Get all news articles",
             "/news/critical": "Get critical news (rank >= 80)",
             "/news/most_critical": "Get most critical news (rank >= 90)",
-            "/news/sources": "Get available news sources with ranking info",
-        },
-        "features": {
-            "location_extraction": "Enabled",
-            "geocoding": "Enabled",
-            "ranking": "Dynamic ranking based on source credibility",
-            "region_classification": "Automatic region type detection",
         },
         "sources": list(RSS_FEEDS.keys()),
     }
