@@ -8,10 +8,9 @@ import spacy
 from geopy.geocoders import Nominatim
 import time
 import math
-
+from textblob import TextBlob  # NEW for sentiment
 
 app = FastAPI()
-
 
 # -------------------------------
 # RSS Feed Sources
@@ -24,7 +23,6 @@ RSS_FEEDS = {
     "Geo News": "https://www.geo.tv/rss/1/1",
 }
 
-
 # -------------------------------
 # Static Rank (as fallback)
 # -------------------------------
@@ -35,7 +33,6 @@ SOURCE_RANK = {
     "The News International": 80,
     "Geo News": 75,
 }
-
 
 # -------------------------------
 # NLP + Geocoding Setup
@@ -76,56 +73,61 @@ def geocode_location(place: str):
 def haversine_distance(lat1, lon1, lat2, lon2):
     """Calculate the great-circle distance between two points in kilometers using the Haversine formula"""
     R = 6371.0  # Earth radius in kilometers
-
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
     delta_lambda = math.radians(lon2 - lon1)
-
     a = (
         math.sin(delta_phi / 2) ** 2
         + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
     )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
     distance_km = R * c
     return distance_km
 
 
 # -------------------------------
-# NEW: Simple Rule-based Categorizer
+# NEW: Categorization
 # -------------------------------
-CATEGORIES = {
-    "politics": ["election", "government", "minister", "parliament", "politics"],
-    "sports": ["match", "tournament", "football", "cricket", "sports", "olympics"],
-    "violence": ["attack", "bomb", "explosion", "shooting", "violence", "terror"],
-    "economy": ["stock", "market", "economy", "trade", "finance", "dollar"],
-    "health": ["covid", "health", "virus", "hospital", "vaccine", "disease"],
-    "technology": ["tech", "AI", "software", "computer", "internet", "technology"],
-}
-
-
-def categorize_article(text: str) -> List[str]:
-    """Return list of categories matching article text"""
-    tags = []
+def categorize_article(text: str) -> str:
+    """Rule-based categorization into topics"""
+    categories = {
+        "Politics": ["election", "government", "parliament", "minister", "policy"],
+        "Sports": ["match", "tournament", "player", "goal", "cricket", "football"],
+        "Violence": ["attack", "explosion", "shooting", "protest", "conflict", "war"],
+        "Economy": ["market", "stock", "economy", "trade", "business", "finance"],
+        "Health": ["covid", "vaccine", "hospital", "doctor", "health", "disease"],
+    }
     text_lower = text.lower()
-    for category, keywords in CATEGORIES.items():
+    for category, keywords in categories.items():
         if any(word in text_lower for word in keywords):
-            tags.append(category)
-    return tags if tags else ["general"]
+            return category
+    return "General"
+
+
+# -------------------------------
+# NEW: Sentiment Analysis
+# -------------------------------
+def analyze_sentiment(text: str) -> str:
+    """Analyze sentiment of text and return Positive, Negative, Neutral"""
+    blob = TextBlob(text)
+    polarity = blob.sentiment.polarity
+    if polarity > 0.1:
+        return "Positive"
+    elif polarity < -0.1:
+        return "Negative"
+    else:
+        return "Neutral"
 
 
 def enrich_article(article: Dict) -> Dict:
-    """Add places (lat/lon), distance, and category tags"""
+    """Add places (lat/lon), distance, tags, and sentiment"""
     text = article["title"] + " " + (article.get("description") or "")
-
-    # Extract locations
     places = extract_locations(text)
     coords = []
     for place in places:
         geo = geocode_location(place)
         if geo:
-            # Calculate distance from New York
             distance = haversine_distance(
                 NEW_YORK_COORDS[0], NEW_YORK_COORDS[1], geo["lat"], geo["lon"]
             )
@@ -133,8 +135,11 @@ def enrich_article(article: Dict) -> Dict:
             coords.append(geo)
     article["places"] = coords
 
-    # Assign categories
+    # NEW: Category tagging
     article["tags"] = categorize_article(text)
+
+    # NEW: Sentiment analysis
+    article["sentiment"] = analyze_sentiment(text)
 
     return article
 
@@ -171,10 +176,8 @@ def parse_rss_feed(feed_url: str, source_name: str) -> List[Dict]:
         response = requests.get(feed_url, headers=headers, timeout=10)
         response.raise_for_status()
         feed = feedparser.parse(response.content)
-
         articles = []
         today = datetime.utcnow().date()
-
         for entry in feed.entries[:20]:
             published_date = None
             if hasattr(entry, "published_parsed") and entry.published_parsed:
@@ -183,14 +186,12 @@ def parse_rss_feed(feed_url: str, source_name: str) -> List[Dict]:
                 published_date = datetime(*entry.updated_parsed[:6])
             else:
                 published_date = datetime.utcnow()
-
             if published_date.date() == today:
                 description = ""
                 if hasattr(entry, "summary"):
                     description = re.sub("<[^<]+?>", "", entry.summary)
                 elif hasattr(entry, "description"):
                     description = re.sub("<[^<]+?>", "", entry.description)
-
                 articles.append(
                     {
                         "title": entry.title if hasattr(entry, "title") else "",
@@ -219,11 +220,9 @@ def fetch_news(location: Optional[str] = None) -> List[Dict]:
     for article in all_articles:
         source_name = article["source"]
         rank = get_dynamic_rank(source_name)
-        # Enrich article with extracted places, distances, and tags
-        article = enrich_article(article)
+        article = enrich_article(article)  # <-- tags + sentiment added here
         article["rank"] = rank
         results.append(article)
-    # Sort so highest rank and newest articles come first
     results.sort(key=lambda x: (x["rank"], x["publishedAt"]), reverse=True)
     return results
 
@@ -251,7 +250,7 @@ def get_most_critical_news(location: Optional[str] = Query(None)):
 @app.get("/")
 def root():
     return {
-        "message": "News RSS Feed API with AI-powered Location Extraction and Categorization",
+        "message": "News RSS Feed API with AI-powered Location Extraction, Categorization, and Sentiment",
         "endpoints": {
             "/news/all": "Get all news articles",
             "/news/critical": "Get critical news (rank >= 80)",
