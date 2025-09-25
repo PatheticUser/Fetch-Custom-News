@@ -7,8 +7,11 @@ import re
 import spacy
 from geopy.geocoders import Nominatim
 import time
+import math
+
 
 app = FastAPI()
+
 
 # -------------------------------
 # RSS Feed Sources
@@ -21,6 +24,7 @@ RSS_FEEDS = {
     "Geo News": "https://www.geo.tv/rss/1/1",
 }
 
+
 # -------------------------------
 # Static Rank (as fallback)
 # -------------------------------
@@ -32,12 +36,16 @@ SOURCE_RANK = {
     "Geo News": 75,
 }
 
+
 # -------------------------------
 # NLP + Geocoding Setup
 # -------------------------------
 nlp = spacy.load("en_core_web_sm")
 geolocator = Nominatim(user_agent="news_app", timeout=30)
 geo_cache = {}
+
+# New York City coordinates for reference
+NEW_YORK_COORDS = (40.7128, -74.0060)
 
 
 def extract_locations(text: str):
@@ -65,16 +73,40 @@ def geocode_location(place: str):
     return None
 
 
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Calculate the great-circle distance between two points in kilometers using the Haversine formula"""
+    R = 6371.0  # Earth radius in kilometers
+
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(delta_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    distance_km = R * c
+    return distance_km
+
+
 def enrich_article(article: Dict) -> Dict:
-    """Add places (lat/lon) and place names to article"""
+    """Add places (lat/lon) and place names, plus distance from New York"""
     text = article["title"] + " " + (article.get("description") or "")
     places = extract_locations(text)
     coords = []
     for place in places:
         geo = geocode_location(place)
         if geo:
+            # Calculate distance from New York
+            distance = haversine_distance(
+                NEW_YORK_COORDS[0], NEW_YORK_COORDS[1], geo["lat"], geo["lon"]
+            )
+            geo["Radius"] = distance
             coords.append(geo)
-    article["places"] = coords  # List of dicts with lat, lon, name
+    article["places"] = coords  # List of dicts with lat, lon, name, distance_from_ny_km
     return article
 
 
@@ -158,23 +190,9 @@ def fetch_news(location: Optional[str] = None) -> List[Dict]:
     for article in all_articles:
         source_name = article["source"]
         rank = get_dynamic_rank(source_name)
-        # Enrich article with extracted places
+        # Enrich article with extracted places and distances
         article = enrich_article(article)
-        # Region type (enhanced check)
-        region_type = "other"
-        if location_lower:
-            text = (article["title"] + " " + article.get("description", "")).lower()
-            places_names = [p["name"].lower() for p in article.get("places", [])]
-            if location_lower in text:
-                region_type = "within_city"
-            elif location_lower in source_name.lower():
-                region_type = "within_region"
-            elif location_lower in places_names:
-                region_type = "within_city"
-            else:
-                region_type = "other"
         article["rank"] = rank
-        article["region_type"] = region_type
         results.append(article)
     # Sort so highest rank and newest articles come first
     results.sort(key=lambda x: (x["rank"], x["publishedAt"]), reverse=True)
