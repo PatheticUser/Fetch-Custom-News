@@ -92,9 +92,34 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return distance_km
 
 
+# -------------------------------
+# NEW: Simple Rule-based Categorizer
+# -------------------------------
+CATEGORIES = {
+    "politics": ["election", "government", "minister", "parliament", "politics"],
+    "sports": ["match", "tournament", "football", "cricket", "sports", "olympics"],
+    "violence": ["attack", "bomb", "explosion", "shooting", "violence", "terror"],
+    "economy": ["stock", "market", "economy", "trade", "finance", "dollar"],
+    "health": ["covid", "health", "virus", "hospital", "vaccine", "disease"],
+    "technology": ["tech", "AI", "software", "computer", "internet", "technology"],
+}
+
+
+def categorize_article(text: str) -> List[str]:
+    """Return list of categories matching article text"""
+    tags = []
+    text_lower = text.lower()
+    for category, keywords in CATEGORIES.items():
+        if any(word in text_lower for word in keywords):
+            tags.append(category)
+    return tags if tags else ["general"]
+
+
 def enrich_article(article: Dict) -> Dict:
-    """Add places (lat/lon) and place names, plus distance from New York"""
+    """Add places (lat/lon), distance, and category tags"""
     text = article["title"] + " " + (article.get("description") or "")
+
+    # Extract locations
     places = extract_locations(text)
     coords = []
     for place in places:
@@ -106,7 +131,11 @@ def enrich_article(article: Dict) -> Dict:
             )
             geo["Radius"] = distance
             coords.append(geo)
-    article["places"] = coords  # List of dicts with lat, lon, name, distance_from_ny_km
+    article["places"] = coords
+
+    # Assign categories
+    article["tags"] = categorize_article(text)
+
     return article
 
 
@@ -190,7 +219,7 @@ def fetch_news(location: Optional[str] = None) -> List[Dict]:
     for article in all_articles:
         source_name = article["source"]
         rank = get_dynamic_rank(source_name)
-        # Enrich article with extracted places and distances
+        # Enrich article with extracted places, distances, and tags
         article = enrich_article(article)
         article["rank"] = rank
         results.append(article)
@@ -222,7 +251,7 @@ def get_most_critical_news(location: Optional[str] = Query(None)):
 @app.get("/")
 def root():
     return {
-        "message": "News RSS Feed API with AI-powered Location Extraction",
+        "message": "News RSS Feed API with AI-powered Location Extraction and Categorization",
         "endpoints": {
             "/news/all": "Get all news articles",
             "/news/critical": "Get critical news (rank >= 80)",
